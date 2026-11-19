@@ -29,7 +29,7 @@ public abstract class Account {
 
     public synchronized void deposit(double amount, String description) {
         requirePositive(amount, "Deposit");
-        balance += amount;
+        addToBalance(amount, "Deposit");
         transactions.add(new Transaction(TransactionType.DEPOSIT, amount, description));
     }
 
@@ -42,15 +42,16 @@ public abstract class Account {
 
     protected final synchronized void credit(double amount, TransactionType type) {
         requirePositive(amount, "Credit");
-        balance += amount;
+        addToBalance(amount, "Credit");
         transactions.add(new Transaction(type, amount, type.name()));
     }
 
     final synchronized void restoreTransaction(Transaction transaction) { transactions.add(transaction); }
-    final synchronized boolean markInterestAppliedIn(YearMonth period) {
-        if (period.equals(lastInterestPeriod)) return false;
+    final synchronized boolean interestWasAppliedIn(YearMonth period) {
+        return period.equals(lastInterestPeriod);
+    }
+    final synchronized void markInterestAppliedIn(YearMonth period) {
         lastInterestPeriod = period;
-        return true;
     }
     final synchronized void restoreInterestPeriod(String period) {
         if (period != null && !period.isBlank()) lastInterestPeriod = YearMonth.parse(period);
@@ -59,6 +60,14 @@ public abstract class Account {
 
     private static void requirePositive(double amount, String operation) {
         if (!Double.isFinite(amount) || amount <= 0) throw new IllegalArgumentException(operation + " amount must be positive.");
+    }
+
+    private void addToBalance(double amount, String operation) {
+        double newBalance = balance + amount;
+        if (!Double.isFinite(newBalance)) {
+            throw new IllegalArgumentException(operation + " would exceed the supported balance.");
+        }
+        balance = newBalance;
     }
 
     public String getAccountNumber() { return accountNumber; }

@@ -1,5 +1,7 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.Connection;
@@ -69,6 +71,61 @@ class BankingIntegrationTest {
                 assertTrue(result.next());
                 assertEquals(Account.DEFAULT_BRANCH, result.getString("branch"));
             }
+        } finally {
+            if (previousUrl == null) System.clearProperty("bank.db.url");
+            else System.setProperty("bank.db.url", previousUrl);
+        }
+    }
+
+    @Test
+    void interestIsPersistedAndCannotBeAppliedTwiceInOneMonth() throws Exception {
+        String previousUrl = System.getProperty("bank.db.url");
+        System.setProperty("bank.db.url", "jdbc:h2:mem:monthly-interest-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1");
+        try {
+            Bank bank = new Bank();
+            Customer customer = new Customer("Interest", "Test", "Gaborone", "12345678", "interest-user", "TestPassword1");
+            bank.registerCustomer(customer);
+            Account account = bank.openAccount(customer, AccountType.INVESTMENT, 1000, "", "");
+
+            assertTrue(bank.applyInterest(account));
+            assertFalse(bank.applyInterest(account));
+
+            Account persisted = bank.getAccountDAO().read(account.getAccountNumber());
+            assertNotNull(persisted);
+            assertEquals(1050, persisted.getBalance(), 0.0001);
+            assertEquals(1, persisted.getTransactions().size());
+            assertEquals(TransactionType.INTEREST, persisted.getTransactions().get(0).getType());
+        } finally {
+            if (previousUrl == null) System.clearProperty("bank.db.url");
+            else System.setProperty("bank.db.url", previousUrl);
+        }
+    }
+
+    @Test
+    void failedTransactionHistoryRewriteRollsBackTheBalanceUpdate() throws Exception {
+        String previousUrl = System.getProperty("bank.db.url");
+        String url = "jdbc:h2:mem:account-rollback-" + UUID.randomUUID() + ";DB_CLOSE_DELAY=-1";
+        System.setProperty("bank.db.url", url);
+        try {
+            Bank bank = new Bank();
+            Customer customer = new Customer("Rollback", "Test", "Gaborone", "12345678", "rollback-user", "TestPassword1");
+            bank.registerCustomer(customer);
+            Account account = bank.openAccount(customer, AccountType.SAVINGS, 100, "", "");
+            account.deposit(25);
+            bank.saveAccount(account);
+
+            try (Connection connection = DatabaseManager.getConnection(); Statement statement = connection.createStatement()) {
+                statement.execute("ALTER TABLE transactions ADD CONSTRAINT transaction_amount_limit CHECK (amount < 30)");
+            }
+            account.deposit(50);
+
+            assertThrows(IllegalStateException.class, () -> bank.saveAccount(account));
+
+            Account persisted = bank.getAccountDAO().read(account.getAccountNumber());
+            assertNotNull(persisted);
+            assertEquals(125, persisted.getBalance(), 0.0001);
+            assertEquals(1, persisted.getTransactions().size());
+            assertEquals(25, persisted.getTransactions().get(0).getAmount(), 0.0001);
         } finally {
             if (previousUrl == null) System.clearProperty("bank.db.url");
             else System.setProperty("bank.db.url", previousUrl);

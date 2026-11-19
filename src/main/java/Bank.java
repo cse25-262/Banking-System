@@ -79,10 +79,14 @@ public class Bank {
 
     public boolean applyInterest(Account account) {
         if (!(account instanceof InterestBearing interestBearing)) return false;
-        if (!account.markInterestAppliedIn(YearMonth.now())) return false;
-        interestBearing.applyInterest();
-        saveAccount(account);
-        return true;
+        synchronized (account) {
+            YearMonth period = YearMonth.now();
+            if (account.interestWasAppliedIn(period)) return false;
+            interestBearing.applyInterest();
+            account.markInterestAppliedIn(period);
+            saveAccount(account);
+            return true;
+        }
     }
 
     public synchronized void startMonthlyInterestSchedule() {

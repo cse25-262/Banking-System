@@ -33,22 +33,34 @@ public class AccountDAO {
     }
 
     public void update(Account account) throws SQLException {
-        try (Connection c = DatabaseManager.getConnection()) {
-            c.setAutoCommit(false);
-            try (PreparedStatement p = c.prepareStatement("UPDATE accounts SET balance=?,branch=?,last_interest_period=? WHERE account_number=?")) {
-                p.setDouble(1, account.getBalance()); p.setString(2, account.getBranch()); p.setString(3, account.getLastInterestPeriod()); p.setString(4, account.getAccountNumber()); p.executeUpdate();
-            }
-            try (PreparedStatement p = c.prepareStatement("DELETE FROM transactions WHERE account_number=?")) {
-                p.setString(1, account.getAccountNumber()); p.executeUpdate();
-            }
-            try (PreparedStatement p = c.prepareStatement("INSERT INTO transactions(account_number,transaction_type,amount,description) VALUES(?,?,?,?)")) {
-                for (Transaction t : account.getTransactions()) {
-                    p.setString(1, account.getAccountNumber()); p.setString(2, t.getType().name()); p.setDouble(3, t.getAmount()); p.setString(4, t.getDescription()); p.addBatch();
+        synchronized (account) {
+            try (Connection c = DatabaseManager.getConnection()) {
+                c.setAutoCommit(false);
+                try {
+                    try (PreparedStatement p = c.prepareStatement("UPDATE accounts SET balance=?,branch=?,last_interest_period=? WHERE account_number=?")) {
+                        p.setDouble(1, account.getBalance()); p.setString(2, account.getBranch()); p.setString(3, account.getLastInterestPeriod()); p.setString(4, account.getAccountNumber());
+                        if (p.executeUpdate() != 1) throw new SQLException("Account was not found: " + account.getAccountNumber());
+                    }
+                    try (PreparedStatement p = c.prepareStatement("DELETE FROM transactions WHERE account_number=?")) {
+                        p.setString(1, account.getAccountNumber()); p.executeUpdate();
+                    }
+                    try (PreparedStatement p = c.prepareStatement("INSERT INTO transactions(account_number,transaction_type,amount,description) VALUES(?,?,?,?)")) {
+                        for (Transaction t : account.getTransactions()) {
+                            p.setString(1, account.getAccountNumber()); p.setString(2, t.getType().name()); p.setDouble(3, t.getAmount()); p.setString(4, t.getDescription()); p.addBatch();
+                        }
+                        p.executeBatch();
+                    }
+                    c.commit();
+                } catch (SQLException | RuntimeException e) {
+                    try {
+                        c.rollback();
+                    } catch (SQLException rollbackFailure) {
+                        e.addSuppressed(rollbackFailure);
+                    }
+                    throw e;
                 }
-                p.executeBatch();
             }
-            c.commit();
-        } catch (SQLException e) { throw e; }
+        }
     }
 
     public void delete(String accountNumber) throws SQLException {
